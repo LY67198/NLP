@@ -156,3 +156,4 @@ def chat_with_nlp_expert():
 
 if __name__ == "__main__":
     chat_with_nlp_expert()
+    luyong = "niumo"
