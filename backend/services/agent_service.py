@@ -3,33 +3,55 @@ LangChain Agent 构建与会话管理。
 使用 create_agent 创建具备 RAG 检索 + 联网搜索双工具的烹饪助手，
 通过 InMemoryStore 实现跨会话的长期用户偏好记忆。
 """
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+from langgraph.store.memory import InMemoryStore
+from services.rag_service import retrieve_context
+from services.search_service import web_search
+import os
 
-from typing import Any
 
-# 实际类型为 langgraph.graph.state.CompiledStateGraph
-AgentInstance = Any
+# 全局长期记忆
+store = InMemoryStore()
 
 
-def get_or_create_agent(session_id: str) -> AgentInstance:
+tools = [retrieve_context, web_search]
+
+system_prompt = """
+你是一名私人厨师。收到用户提供的食材清单后，请按以下流程操作：
+1.智能食谱检索：优先调用 retrieve_context 工具，如果没有得到信息再调用 web_search 工具，查找可行菜谱。
+2.多维度评估与排序：从营养价值和制作难度两个维度对检索到的候选食谱进行量化打分，并根据得分排序，制作简单且营养丰富的排名靠前。
+3.结构化方案输出：把排序后的食谱整理为一份结构清晰的建议报告，要包含食谱信息、得分、推荐理由，帮助用户快速做出决策。
+4.持续对话：用户选择一道菜后，给出详细做法；后续可以追问替代食材、调整做法等。
+
+请严格按照流程，优先调用 retrieve_context 工具本地检索食谱，如果没有的话使用 web_search 联网搜索工具返回食谱信息，回复末尾注明（来源:网络搜索）。
+"""
+model = init_chat_model(
+    model="mimo-v2-omni",
+    model_provider="openai",
+    api_key=os.getenv("MIMO_API_KEY"),
+    base_url=os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),
+)
+
+_agents: dict = {}
+
+
+def get_or_create_agent(session_id: str):
     """获取或创建指定会话的 Agent 实例。
 
     每个 session_id 对应一个独立的 Agent 实例，
     同一会话内的多轮对话共享上下文记忆。
-
-    Args:
-        session_id: 会话唯一标识。前端首次传 "new" 时由路由层生成新的 session_id。
-
-    Returns:
-        AgentInstance: LangGraph Agent 实例，支持 .invoke() 和 .astream()。
     """
+    if session_id not in _agents:
+        _agents[session_id] = create_agent(
+            model, tools, system_prompt=system_prompt
+        )
+    return _agents[session_id]
 
 
 def clear_session(session_id: str) -> bool:
-    """清除指定会话的 Agent 实例及记忆。
-
-    Args:
-        session_id: 要清除的会话 ID。
-
-    Returns:
-        bool: 清除成功返回 True，会话不存在返回 False。
-    """
+    """清除指定会话的 Agent 实例及记忆。"""
+    if session_id in _agents:
+        del _agents[session_id]
+        return True
+    return False

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import agent, rag, vision
+from routers import agent, rag
 
 app = FastAPI()
 
@@ -11,5 +11,4 @@ async def root():
 
 app.include_router(agent.router)
 app.include_router(rag.router)
-app.include_router(vision.router)
 
