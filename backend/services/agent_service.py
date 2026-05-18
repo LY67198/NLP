@@ -8,7 +8,6 @@ from langchain.chat_models import init_chat_model
 from langgraph.store.memory import InMemoryStore
 from langchain_core.messages import AIMessage, AIMessageChunk
 from services.rag_service import retrieve_context
-from services.search_service import web_search
 import langchain_openai.chat_models.base as _base
 import os
 
@@ -42,16 +41,16 @@ _base._convert_message_to_dict = _patched_convert_message
 store = InMemoryStore()
 
 
-tools = [retrieve_context, web_search]
+tools = [retrieve_context]
 
 system_prompt = """
 你是一名私人厨师。收到用户提供的食材清单后，请按以下流程操作：
-1.智能食谱检索：优先调用 retrieve_context 工具，如果没有得到信息再调用 web_search 工具，查找可行菜谱。
+1.智能食谱检索：调用 retrieve_context 工具检索菜谱，该工具会自动优先本地知识库，本地无结果时自动联网搜索。
 2.多维度评估与排序：从营养价值和制作难度两个维度对检索到的候选食谱进行量化打分，并根据得分排序，制作简单且营养丰富的排名靠前。
 3.结构化方案输出：把排序后的食谱整理为一份结构清晰的建议报告，要包含食谱信息、得分、推荐理由，帮助用户快速做出决策。
 4.持续对话：用户选择一道菜后，给出详细做法；后续可以追问替代食材、调整做法等。
 
-请严格按照流程，优先调用 retrieve_context 工具本地检索食谱，如果没有的话使用 web_search 联网搜索工具返回食谱信息，回复末尾注明（来源:网络搜索）。
+请严格按照流程操作。回复末尾注明信息来源（本地检索或网络搜索）。
 """
 model = init_chat_model(
     model="mimo-v2-omni",

@@ -67,8 +67,8 @@ services/
   __init__.py        # Re-exports all service functions
   agent_service.py   # Agent via langchain.agents.create_agent(), InMemoryStore for long-term memory
                      #   — includes monkey-patch for MIMO API reasoning_content preservation (see below)
-  rag_service.py     # Recipe ingestion → chunking → ChromaDB; retrieve_context tool
-  search_service.py  # Tavily web search tool (fallback when local RAG misses)
+  rag_service.py     # Recipe ingestion → chunking → ChromaDB; retrieve_context tool (local-first, auto-fallback to web_search)
+  search_service.py  # Tavily web search (called internally by retrieve_context, not exposed as Agent tool)
   vision_service.py  # Ollama qwen3-vl:4b ingredient recognition via httpx
   vector_store.py    # ChromaDB singleton, HuggingFace text2vec-base-chinese embeddings
 utils/
@@ -84,7 +84,7 @@ data/
 1. Request arrives with `sessionId`, `message`, optional `file`
 2. If `sessionId == "new"` → generates UUID. If `file` present → `vision_service.recognize_ingredients()` calls Ollama qwen3-vl:4b → ingredient list injected as message prefix
 3. `get_or_create_agent(session_id)` returns cached or new agent via `create_agent(model, tools, system_prompt=...)`
-4. Agent has two tools: `retrieve_context` (ChromaDB RAG) and `web_search` (Tavily)
+4. Agent has a single tool `retrieve_context`, which internally handles both ChromaDB RAG and Tavily web search fallback
 5. Response streams via SSE: `{"sessionId": "..."}` first, then `{"token": "..."}` chunks, then `[DONE]`
 
 **Session management:** Agents cached in an in-memory `_agents: dict` keyed by session ID. `InMemoryStore` provides cross-session long-term memory for user preferences. Sessions lost on restart.
