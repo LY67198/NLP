@@ -27,6 +27,28 @@ start.bat         # starts Ollama check → backend → frontend → opens brows
 
 No test suite is configured yet.
 
+## Troubleshooting
+
+### Ollama GPU 未启用（CPU-only 导致超时）
+
+**现象：** `httpx.ReadTimeout` 从 vision_service 抛出，Ollama `/api/chat` 请求耗时 2-4 分钟返回 500。
+
+**诊断：**
+```bash
+ollama ps          # 查看 PROCESSOR 列：100% CPU = GPU 未启用
+ollama logs        # 查看是否有 "failure during GPU discovery" / "offloaded 0/37 layers to GPU"
+```
+
+**根因：** Ollama GPU 发现偶发超时失败，回退到纯 CPU 推理。日志标记：`failure during GPU discovery ... timeout`，随后 `inference compute id=cpu ... total_vram="0 B"`。
+
+**解决：** 重启 Ollama（托盘图标退出后重新启动）。重启后日志应显示：`inference compute ... library=CUDA ... total="6.0 GiB"`。
+
+**验证：** `ollama ps` 中 PROCESSOR 应显示为 GPU 百分比（如 `100% GPU`）。
+
+### httpx 超时配置
+
+vision_service.py 中 `httpx.AsyncClient(timeout=240.0)` 控制 Ollama 视觉识别超时。GPU 启用时识别通常 5-15 秒完成；CPU-only 可能需要 2-4 分钟。此 timeout 已在 2026-05-18 从 60s 调整为 240s 以兼容 CPU fallback 场景。
+
 ## Architecture
 
 SmartChef is an AI-powered kitchen assistant: upload a photo of ingredients → vision model identifies them → RAG retrieves matching recipes → conversational agent recommends dishes and guides cooking. All interaction goes through a single `/api/agent/chat` SSE streaming endpoint.

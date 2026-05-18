@@ -11,7 +11,7 @@ async def recognize_ingredients(image_bytes: bytes) -> list[str]:
     """识别图片中的食材，返回食材名称列表。"""
     image_b64 = base64.b64encode(image_bytes).decode()
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=240.0) as client:
         resp = await client.post(
             f"{OLLAMA_BASE}/api/chat",
             json={
