@@ -6,9 +6,36 @@ LangChain Agent 构建与会话管理。
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langgraph.store.memory import InMemoryStore
+from langchain_core.messages import AIMessage, AIMessageChunk
 from services.rag_service import retrieve_context
 from services.search_service import web_search
+import langchain_openai.chat_models.base as _base
 import os
+
+
+# MIMO API 的 thinking 模式返回 reasoning_content，langchain-openai
+# 不会保留这个字段，导致多轮对话时 API 报错。以下 patch 两个
+# module-level 函数，保证 reasoning_content 在往返中不丢失。
+_orig_convert_delta = _base._convert_delta_to_message_chunk
+_orig_convert_message = _base._convert_message_to_dict
+
+
+def _patched_convert_delta(_dict, default_class):
+    msg_chunk = _orig_convert_delta(_dict, default_class)
+    if "reasoning_content" in _dict and isinstance(msg_chunk, AIMessageChunk):
+        msg_chunk.additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
+    return msg_chunk
+
+
+def _patched_convert_message(message, api="chat/completions"):
+    msg_dict = _orig_convert_message(message, api)
+    if isinstance(message, AIMessage) and "reasoning_content" in message.additional_kwargs:
+        msg_dict["reasoning_content"] = message.additional_kwargs["reasoning_content"]
+    return msg_dict
+
+
+_base._convert_delta_to_message_chunk = _patched_convert_delta
+_base._convert_message_to_dict = _patched_convert_message
 
 
 # 全局长期记忆

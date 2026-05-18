@@ -68,7 +68,7 @@ def retrieve_context(query:str,k:int=3):
     if  vector_store is None:
         result=web_search(query) 
     else:
-        docs = vector_store.search_similar(query=query,k=k)
+        docs = vector_store.similarity_search(query=query,k=k)
         if docs:
             result = "\n\n".join(doc.page_content for doc in docs)
         else:
