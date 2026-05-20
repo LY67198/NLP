@@ -29,12 +29,15 @@
       </div>
 
       <!-- Message text -->
-      <div class="msg-content" v-text="message.content"></div>
+      <div class="msg-content" v-text="displayContent"></div>
 
       <!-- Source badges -->
-      <div v-if="message.meta?.sources?.length" class="sources">
-        <span v-for="src in message.meta.sources" :key="src" :class="['badge', badgeClass(src)]">
+      <div v-if="message.meta?.sources?.length || sourceBadge" class="sources">
+        <span v-for="src in message.meta?.sources || []" :key="src" :class="['badge', badgeClass(src)]">
           {{ src }}
+        </span>
+        <span v-if="sourceBadge && !message.meta?.sources?.includes(sourceBadge)" :class="['badge', badgeClass(sourceBadge)]">
+          {{ sourceBadge }}
         </span>
       </div>
 
@@ -45,9 +48,22 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+
 const props = defineProps({
   message: { type: Object, required: true },
   isUser: { type: Boolean, default: false }
+})
+
+const SOURCE_PATTERN = /【数据来源：(本地知识库|网络搜索)】/
+
+const displayContent = computed(() => {
+  return (props.message.content || '').replace(SOURCE_PATTERN, '').trim()
+})
+
+const sourceBadge = computed(() => {
+  const match = (props.message.content || '').match(SOURCE_PATTERN)
+  return match ? match[1] : null
 })
 
 function confidenceText(c) {
@@ -56,6 +72,8 @@ function confidenceText(c) {
 }
 
 function badgeClass(src) {
+  if (src === '本地知识库') return 'badge-local'
+  if (src === '网络搜索') return 'badge-web'
   if (src.includes('菜谱')) return 'badge-local'
   if (src.includes('网络')) return 'badge-web'
   if (src.includes('识别') || src.includes('图片')) return 'badge-vision'

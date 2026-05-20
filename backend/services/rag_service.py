@@ -27,7 +27,6 @@ def ingest_file(file_path: str | None = None) -> list[str]:
     return ids
 
 
-
 def search_similar(query: str, k: int = 3) -> list[dict]:
     """在本地菜谱库中语义检索，返回最相似的 k 个菜谱片段。
 
@@ -43,9 +42,6 @@ def search_similar(query: str, k: int = 3) -> list[dict]:
     return [{"content": doc.page_content, "metadata": doc.metadata} for doc in docs]
 
 
-
-
-
 def get_status() -> dict:
     """获取向量库状态，返回已入库的文档片段总数。
 
@@ -57,24 +53,20 @@ def get_status() -> dict:
 
 
 @tool
-def retrieve_context(query:str,k:int=3):
+def retrieve_context(query: str, k: int = 3):
     """【Agent 工具】优先调用，在本地菜谱知识库中语义检索匹配菜谱。
 
     若本地库无相关结果，Agent 应转而调用 web_search 联网搜索。
     """
     vector_store = get_vector_store()
-   
 
-    if  vector_store is None:
-        result=web_search(query) 
+    if vector_store is None:
+        result = "【数据来源：网络搜索】\n\n" + web_search(query)
     else:
-        docs = vector_store.similarity_search(query=query,k=k)
+        docs = vector_store.similarity_search(query=query, k=k)
         if docs:
-            result = "\n\n".join(doc.page_content for doc in docs)
+            result = "【数据来源：本地知识库】\n\n" + "\n\n".join(doc.page_content for doc in docs)
         else:
-            result= web_search(query)
+            result = "【数据来源：网络搜索】\n\n" + web_search(query)
 
     return result
-
-
-

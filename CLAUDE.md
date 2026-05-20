@@ -95,7 +95,7 @@ data/
 
 **Vision service** (`services/vision_service.py`): `recognize_ingredients(image_bytes) → list[str]` — base64-encodes image, POSTs to `http://localhost:11434/api/chat` with `qwen3-vl:4b`, parses JSON ingredient list from response (with regex fallback for malformed output). Runs as preprocessing before the agent, not as an agent tool.
 
-**RAG pipeline** (`services/rag_service.py`): recipes split on `\n---\n` → chunks via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB. `retrieve_context` tool prefers local RAG, falls back to `web_search`.
+**RAG pipeline** (`services/rag_service.py`): recipes split on `\n---\n` → chunks via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB. `retrieve_context` tool prefers local RAG, falls back to `web_search`. Results are prefixed with `【数据来源：本地知识库】` or `【数据来源：网络搜索】` so the LLM and frontend can identify the source.
 
 ### Frontend (Vue 3 + Vite on :3000)
 
@@ -109,7 +109,7 @@ src/
     ChatArea.vue       # Message list, streaming indicator, delegates to ChatInput
     Sidebar.vue        # Session list sidebar, RAG status display
     ChatInput.vue      # Text input + image upload button, Enter to send
-    MessageBubble.vue  # Single chat message rendering (text, images, ingredient tags, sources)
+    MessageBubble.vue  # Single chat message rendering (text, images, ingredient tags, sources). Parses 【数据来源：...】 from AI response → renders source badges (green=local, blue=web)
     WelcomeCard.vue    # Empty-state prompt suggestions (3 example prompts)
     ImagePreview.vue   # Thumbnail of pending upload with remove button
     IngredientTags.vue # Editable ingredient chips (defined but not wired in current render flow)
