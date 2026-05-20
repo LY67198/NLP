@@ -17,25 +17,55 @@ async def chat(
     if sessionId == "new":
         sessionId = str(uuid.uuid4())
 
-    # 图片预处理：先识图，将食材注入消息
+    # 提前读取图片字节，避免阻塞 SSE 流的启动
+    img_bytes = None
     if file is not None:
         img_bytes = await file.read()
-        ingredients = await recognize_ingredients(img_bytes)
-        prefix = f"用户上传了一张食材图片，识别到以下食材：{', '.join(ingredients)}。"
-        message = f"{prefix} {message or '请根据这些食材推荐菜谱。'}"
-
-    agent = agent_service.get_or_create_agent(sessionId)
 
     async def event_stream():
+        # 立即发送 sessionId，让前端知道连接已建立
         yield f"data: {json.dumps({'sessionId': sessionId})}\n\n"
+
+        nonlocal message
+
+        # 图片预处理：在 SSE 流内进行，发送状态通知前端
+        if img_bytes is not None:
+            yield f"data: {json.dumps({'status': '正在分析图片中的食材...'})}\n\n"
+            try:
+                ingredients = await recognize_ingredients(img_bytes)
+                prefix = f"用户上传了一张食材图片，识别到以下食材：{', '.join(ingredients)}。"
+                message = f"{prefix} {message or '请根据这些食材推荐菜谱。'}"
+            except Exception as e:
+                yield f"data: {json.dumps({'status': f'图片识别失败，将直接处理您的消息。'})}\n\n"
+                # 继续使用原始消息，不阻断流程
+
+        agent = agent_service.get_or_create_agent(sessionId)
+
+        sources_seen = set()  # 来源追踪：收集所有唯一来源
+
         async for event in agent.astream_events(
             {"messages": [{"role": "user", "content": message}]},
             version="v2",
         ):
+            # 追踪 retrieve_context 工具返回的来源
+            if event["event"] == "on_tool_end" and event.get("name") == "retrieve_context":
+                output = event["data"].get("output", "")
+                if isinstance(output, str):
+                    if "本地知识库" in output:
+                        sources_seen.add("本地知识库")
+                    if "网络搜索" in output:
+                        sources_seen.add("网络搜索")
+
             if event["event"] == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
                 if chunk.content:
                     yield f"data: {json.dumps({'token': chunk.content})}\n\n"
+
+        # 流结束后追加来源脚注
+        if sources_seen:
+            label = "、".join(sources_seen)
+            yield f"data: {json.dumps({'token': f'\\n\\n📎 数据来源：{label}'})}\n\n"
+
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

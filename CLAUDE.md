@@ -82,10 +82,13 @@ data/
 
 **Agent flow** (`routers/agent.py` → `services/agent_service.py`):
 1. Request arrives with `sessionId`, `message`, optional `file`
-2. If `sessionId == "new"` → generates UUID. If `file` present → `vision_service.recognize_ingredients()` calls Ollama qwen3-vl:4b → ingredient list injected as message prefix
-3. `get_or_create_agent(session_id)` returns cached or new agent via `create_agent(model, tools, system_prompt=...)`
-4. Agent has a single tool `retrieve_context`, which internally handles both ChromaDB RAG and Tavily web search fallback
-5. Response streams via SSE: `{"sessionId": "..."}` first, then `{"token": "..."}` chunks, then `[DONE]`
+2. If `sessionId == "new"` → generates UUID. If `file` present → reads image bytes early (before SSE stream)
+3. SSE stream starts **immediately**: first event `{"sessionId": "..."}` so frontend always gets a response
+4. If image present → `{"status": "正在分析图片中的食材..."}` event, then `vision_service.recognize_ingredients()` runs **inside** the stream. On success → ingredient list injected as message prefix. On failure → error status event, flow continues with original message (graceful degradation)
+5. `get_or_create_agent(session_id)` returns cached or new agent via `create_agent(model, tools, system_prompt=...)`
+6. Agent has a single tool `retrieve_context`, which internally handles both ChromaDB RAG and Tavily web search fallback
+7. Response streams via SSE: `{"sessionId": "..."}` first, then optional `{"status": "..."}`, then `{"token": "..."}` chunks, then programmatic `📎 数据来源：xxx` footer token (if retrieve_context was called), then `[DONE]`
+8. Source tracking: router listens for `on_tool_end` events from `retrieve_context`, parses `【数据来源：...】` from tool output, collects unique sources in a set, and appends a source footer token after the model finishes streaming. This is programmatic — does not rely on the model preserving labels in its response.
 
 **Session management:** Agents cached in an in-memory `_agents: dict` keyed by session ID. `InMemoryStore` provides cross-session long-term memory for user preferences. Sessions lost on restart.
 
@@ -93,9 +96,9 @@ data/
 - `_patched_convert_delta` — captures `reasoning_content` from API deltas into `AIMessageChunk.additional_kwargs`
 - `_patched_convert_message` — writes `reasoning_content` back from `AIMessage.additional_kwargs` to the outgoing API request dict
 
-**Vision service** (`services/vision_service.py`): `recognize_ingredients(image_bytes) → list[str]` — base64-encodes image, POSTs to `http://localhost:11434/api/chat` with `qwen3-vl:4b`, parses JSON ingredient list from response (with regex fallback for malformed output). Runs as preprocessing before the agent, not as an agent tool.
+**Vision service** (`services/vision_service.py`): `recognize_ingredients(image_bytes) → list[str]` — base64-encodes image, POSTs to `http://localhost:11434/api/chat` with `qwen3-vl:4b` (timeout=240s), parses JSON ingredient list from response (with regex fallback for malformed output). Runs inside the SSE stream (not as blocking pre-processing); router catches exceptions and degrades gracefully — the conversation continues even if vision fails.
 
-**RAG pipeline** (`services/rag_service.py`): recipes split on `\n---\n` → chunks via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB. `retrieve_context` tool prefers local RAG, falls back to `web_search`. Results are prefixed with `【数据来源：本地知识库】` or `【数据来源：网络搜索】` so the LLM and frontend can identify the source.
+**RAG pipeline** (`services/rag_service.py`): recipes split on `\n---\n` → chunks via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB. `retrieve_context` tool uses `similarity_search_with_relevance_scores` with a relevance threshold (0.4 on 0-1 scale) — low-quality matches are filtered out, triggering web search fallback. Results prefixed with `【数据来源：本地知识库】` or `【数据来源：网络搜索】`, parsed by router to programmatically append a source footer.
 
 ### Frontend (Vue 3 + Vite on :3000)
 
@@ -118,7 +121,7 @@ src/
     main.css           # Global styles, low-saturation warm palette
 ```
 
-**Data flow:** User types text / uploads image / both → `chat.js:sendMessage()` → POST `/api/agent/chat` with FormData (sessionId, message, file) → SSE streamed tokens appended to last AI message in real time.
+**Data flow:** User types text / uploads image / both → `chat.js:sendMessage()` → POST `/api/agent/chat` with FormData (sessionId, message, file) → SSE stream: `sessionId` event first, optional `status` events (e.g. "正在分析图片中的食材..."), then `token` chunks streamed in real time. Status text is shown in the AI message bubble and replaced by the first real token (avoids "dirty" concatenation).
 
 **State** lives in Pinia `chat` store: `sessions`, `activeSessionId`, `pendingImage`, `isStreaming`. No frontend-side recipe matching or ingredient logic.
 

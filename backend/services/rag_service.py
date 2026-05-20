@@ -52,21 +52,25 @@ def get_status() -> dict:
     return {"total_chunks": count}
 
 
+RELEVANCE_THRESHOLD = 0.4  # 相关性阈值（0-1），低于此值的本地结果视为不匹配，回退网络搜索
+
+
 @tool
 def retrieve_context(query: str, k: int = 3):
-    """【Agent 工具】优先调用，在本地菜谱知识库中语义检索匹配菜谱。
+    """【Agent 工具】在本地菜谱知识库中语义检索匹配菜谱。
 
-    若本地库无相关结果，Agent 应转而调用 web_search 联网搜索。
+    自动判断结果相关性：高质量匹配 → 本地知识库，无关结果 → 自动回退网络搜索。
     """
     vector_store = get_vector_store()
 
     if vector_store is None:
-        result = "【数据来源：网络搜索】\n\n" + web_search(query)
-    else:
-        docs = vector_store.similarity_search(query=query, k=k)
-        if docs:
-            result = "【数据来源：本地知识库】\n\n" + "\n\n".join(doc.page_content for doc in docs)
-        else:
-            result = "【数据来源：网络搜索】\n\n" + web_search(query)
+        return "【数据来源：网络搜索】\n\n" + web_search(query)
 
-    return result
+    docs_with_scores = vector_store.similarity_search_with_relevance_scores(query=query, k=k)
+    relevant = [(doc, score) for doc, score in docs_with_scores if score >= RELEVANCE_THRESHOLD]
+
+    if relevant:
+        lines = [f"{doc.page_content}" for doc, _ in relevant]
+        return "【数据来源：本地知识库】\n\n" + "\n\n".join(lines)
+    else:
+        return "【数据来源：网络搜索】\n\n" + web_search(query)
