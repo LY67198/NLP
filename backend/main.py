@@ -1,18 +1,30 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from routers import agent, rag
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
+from routers import agent, rag
+from services.rag_service import ingest_file, get_status
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时：向量库为空则自动导入菜谱
+    status = get_status()
+    if status["total_chunks"] == 0:
+        ingest_file()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins = ["*"], #允许的源，开发阶段允许所有的源，生成环节需要指定源
-    allow_credentials=True, #允许携带cookie
-    allow_methods=["*"], # 允许的请求方法
-    allow_headers=["*"],# 允许的请求头
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-
 
 
 @app.get("/")

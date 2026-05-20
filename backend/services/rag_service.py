@@ -16,7 +16,7 @@ def ingest_file(file_path: str | None = None) -> list[str]:
     """
     if file_path is None:
         file_path = str(RECIPES_DIR / "recipes_dataset.txt")
-    loader = TextLoader(file_path=file_path)
+    loader = TextLoader(file_path=file_path, encoding="utf-8")
     docs = loader.load()
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
@@ -64,7 +64,7 @@ def retrieve_context(query: str, k: int = 3):
     vector_store = get_vector_store()
 
     if vector_store is None:
-        return "【数据来源：网络搜索】\n\n" + web_search(query)
+        return "【数据来源：网络搜索】\n\n" + web_search.invoke({"query": query})
 
     docs_with_scores = vector_store.similarity_search_with_relevance_scores(query=query, k=k)
     relevant = [(doc, score) for doc, score in docs_with_scores if score >= RELEVANCE_THRESHOLD]
@@ -73,4 +73,4 @@ def retrieve_context(query: str, k: int = 3):
         lines = [f"{doc.page_content}" for doc, _ in relevant]
         return "【数据来源：本地知识库】\n\n" + "\n\n".join(lines)
     else:
-        return "【数据来源：网络搜索】\n\n" + web_search(query)
+        return "【数据来源：网络搜索】\n\n" + web_search.invoke({"query": query})

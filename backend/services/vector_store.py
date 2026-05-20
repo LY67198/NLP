@@ -14,7 +14,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
 RECIPES_DIR = BASE_DIR / "data" / "recipes"
 CHROMA_DIR = BASE_DIR / "data" / "chroma_db"
 
-_embedding_model = HuggingFaceEmbeddings(model_name="shibing624/text2vec-base-chinese")
+_embedding_model = HuggingFaceEmbeddings(
+    model_name="shibing624/text2vec-base-chinese",
+    encode_kwargs={"normalize_embeddings": True},
+)
 
 _vector_store = None
 
@@ -23,6 +26,7 @@ def get_vector_store() -> Chroma:
     """获取全局 ChromaDB 向量库实例（懒加载）。
 
     首次调用时初始化，后续调用返回同一实例。
+    使用 cosine 距离，让 relevance_score 正确落在 0-1 区间。
     """
     global _vector_store
     if _vector_store is None:
@@ -30,5 +34,6 @@ def get_vector_store() -> Chroma:
             collection_name="recipes",
             embedding_function=_embedding_model,
             persist_directory=str(CHROMA_DIR),
+            collection_metadata={"hnsw:space": "cosine"},
         )
     return _vector_store
