@@ -136,17 +136,47 @@ export const useChatStore = defineStore('chat', {
 
       const file = hasImage ? this.pendingImage.file : null
 
+      // Track whether the last AI message is a status placeholder
+      let hasStatus = false
+
       try {
         await new Promise((resolve) => {
           agentChatStream({
             sessionId: sid,
             message: text,
             file,
-            onToken: (token) => this._updateLastAI(sid, token),
+            onToken: (token) => {
+              const session = this.sessions[sid]
+              if (!session) return
+              const msgs = session.messages
+              if (msgs.length > 0 && msgs[msgs.length - 1].role === 'ai') {
+                if (hasStatus) {
+                  msgs[msgs.length - 1].content = token
+                  hasStatus = false
+                } else {
+                  msgs[msgs.length - 1].content += token
+                }
+              }
+            },
             onSessionId: () => {},
+            onStatus: (text) => {
+              const session = this.sessions[sid]
+              if (!session) return
+              const msgs = session.messages
+              if (msgs.length > 0 && msgs[msgs.length - 1].role === 'ai') {
+                msgs[msgs.length - 1].content = text
+                hasStatus = true
+              }
+            },
             onDone: resolve,
             onError: (err) => {
-              this._updateLastAI(sid, `[错误] ${err}`)
+              const session = this.sessions[sid]
+              if (!session) { resolve(); return }
+              const msgs = session.messages
+              if (msgs.length > 0 && msgs[msgs.length - 1].role === 'ai') {
+                msgs[msgs.length - 1].content = (hasStatus ? '' : msgs[msgs.length - 1].content) + `[错误] ${err}`
+                hasStatus = false
+              }
               resolve()
             }
           })

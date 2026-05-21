@@ -8,6 +8,7 @@ from langchain.chat_models import init_chat_model
 from langgraph.store.memory import InMemoryStore
 from langchain_core.messages import AIMessage, AIMessageChunk
 from services.rag_service import retrieve_context
+from services.search_service import web_search
 import langchain_openai.chat_models.base as _base
 import os
 
@@ -41,7 +42,7 @@ _base._convert_message_to_dict = _patched_convert_message
 store = InMemoryStore()
 
 
-tools = [retrieve_context]
+tools = [retrieve_context, web_search]
 
 system_prompt = """
 你是一名私人厨师。根据用户意图，你需要判断该走哪种模式：
@@ -61,6 +62,13 @@ system_prompt = """
 3. 不要做评分、排名或多菜对比——用户已经知道要做什么，只需要做法。
 
 **关键判断：** 只要用户提到了具体菜名，就选 B 模式。只有用户单纯列出食材且没有指定菜名时，才走 A 模式。
+
+**工具使用规则（重要！严格遵守）：**
+- 第一步：调用 retrieve_context 搜索本地菜谱知识库。
+- 第二步：判断返回结果是否匹配。
+  - 如果返回了与用户需求匹配的菜谱（如用户问西红柿炒鸡蛋，返回了西红柿炒鸡蛋），直接使用这些结果回复用户。严禁再调用 web_search！
+  - 只有在返回结果明显不匹配（如用户要墨西哥菜、意大利菜、日料等本地库没有的菜系），或未返回任何结果时，才调用 web_search。
+- 严禁自行编造菜谱，你只能推荐工具返回结果中实际存在的菜谱。
 
 请严格按照上述规则操作。工具返回结果可能包含来源标注，请不要在回复中重复这些标注——系统会自动追加来源信息。
 """

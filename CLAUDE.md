@@ -57,11 +57,6 @@ vision_service.py 中 `httpx.AsyncClient(timeout=240.0)` 控制 Ollama 视觉识
 
 **解决：** `vector_store.py` 中配置 `collection_metadata={"hnsw:space": "cosine"}` 并设置 `encode_kwargs={"normalize_embeddings": True}`。**需要删除旧 `chroma_db/` 后重新入库**（否则 collection 仍使用旧的 L2 索引）。
 
-**现象 2（2026-05-21）：** 所有查询都命中本地知识库，网络搜索回退从不触发。
-
-**根因：** 切换到 cosine 后分数正常落在 0-1 区间，但 `RELEVANCE_THRESHOLD = 0.4` 偏低。菜谱库仅 25 chunks，`text2vec-base-chinese` 对任何食物相关查询都能找到 >= 0.45 的弱匹配（如"日本寿司"与"麻婆豆腐"仍有 0.48 余弦相似度）。
-
-**解决：** `RELEVANCE_THRESHOLD` 从 0.4 上调至 **0.6**。实测：西红柿炒鸡蛋 0.65（命中），意大利海鲜烩饭 0.58（回退），日本寿司 0.48（回退）。
 
 ### Windows 下 TextLoader 编码报错
 
@@ -91,8 +86,8 @@ services/
   agent_service.py   # Agent via langchain.agents.create_agent(), InMemoryStore for long-term memory
                      #   — includes monkey-patch for MIMO API reasoning_content preservation (see below)
                      #   — dual-mode system prompt: mode A (ingredients → recommend/rank), mode B (specific dish → direct recipe)
-  rag_service.py     # Recipe ingestion → chunking → ChromaDB; retrieve_context tool (local-first, auto-fallback to web_search)
-  search_service.py  # Tavily web search (@tool-decorated StructuredTool, called via .invoke() not direct call)
+  rag_service.py     # Recipe ingestion → chunking → ChromaDB; retrieve_context tool (local-only, no threshold — LLM judges relevance)
+  search_service.py  # Tavily web search (@tool-decorated StructuredTool, exposed as direct agent tool)
   vision_service.py  # Ollama qwen3-vl:4b ingredient recognition via httpx
   vector_store.py    # ChromaDB singleton, HuggingFace text2vec-base-chinese embeddings with normalize_embeddings=True, cosine distance
 utils/
@@ -110,9 +105,9 @@ data/
 3. SSE stream starts **immediately**: first event `{"sessionId": "..."}` so frontend always gets a response
 4. If image present → `{"status": "正在分析图片中的食材..."}` event, then `vision_service.recognize_ingredients()` runs **inside** the stream. On success → ingredient list injected as message prefix. On failure → error status event, flow continues with original message (graceful degradation)
 5. `get_or_create_agent(session_id)` returns cached or new agent via `create_agent(model, tools, system_prompt=...)`
-6. Agent has a single tool `retrieve_context`, which internally handles both ChromaDB RAG and Tavily web search fallback
+6. Agent has two tools: `retrieve_context` (local ChromaDB search) and `web_search` (Tavily). The LLM decides which to call — local results matching → uses them directly; local results irrelevant (e.g. foreign cuisine not in the KB) → calls web_search.
 7. Response streams via SSE: `{"sessionId": "..."}` first, then optional `{"status": "..."}`, then `{"token": "..."}` chunks, then programmatic `📎 数据来源：xxx` footer token (if retrieve_context was called), then `[DONE]`
-8. Source tracking: router listens for `on_tool_end` events from `retrieve_context`. LangGraph wraps tool output in `ToolMessage` objects — the router extracts `.content` (not the raw `output` string) to detect `【数据来源：本地知识库】` or `【数据来源：网络搜索】` labels, collecting unique sources in a set, and appending a `📎 数据来源：xxx` footer token after the model finishes streaming. This is programmatic — does not rely on the model preserving labels in its response.
+8. Source tracking: router listens for `on_tool_end` events, tracks by tool name — `retrieve_context` → "本地知识库", `web_search` → "网络搜索". Collects unique sources in a set, appends `📎 数据来源：xxx` footer after the model finishes streaming. The LLM is prompted to skip web_search when local results clearly match, so Chinese dishes show only "本地知识库" while foreign dishes trigger web_search and show "网络搜索".
 
 **Session management:** Agents cached in an in-memory `_agents: dict` keyed by session ID. `InMemoryStore` provides cross-session long-term memory for user preferences. Sessions lost on restart.
 
@@ -122,7 +117,7 @@ data/
 
 **Vision service** (`services/vision_service.py`): `recognize_ingredients(image_bytes) → list[str]` — base64-encodes image, POSTs to `http://localhost:11434/api/chat` with `qwen3-vl:4b` (timeout=240s), parses JSON ingredient list from response (with regex fallback for malformed output). Runs inside the SSE stream (not as blocking pre-processing); router catches exceptions and degrades gracefully — the conversation continues even if vision fails.
 
-**RAG pipeline** (`services/rag_service.py`): recipes loaded with `TextLoader(encoding="utf-8")` (GBK default on Windows breaks CJK characters) → chunked via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB (cosine distance, `normalize_embeddings=True`). `retrieve_context` tool uses `similarity_search_with_relevance_scores` with a relevance threshold (0.6 on 0-1 scale) — low-quality matches are filtered out, triggering web search fallback. Results prefixed with `【数据来源：本地知识库】` or `【数据来源：网络搜索】`, parsed by router to programmatically append a source footer. Note: `web_search` is a `@tool`-decorated `StructuredTool` and must be called via `.invoke({"query": query})`, not as a plain function.
+**RAG pipeline** (`services/rag_service.py`): recipes loaded with `TextLoader(encoding="utf-8")` (GBK default on Windows breaks CJK characters) → chunked via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB (cosine distance, `normalize_embeddings=True`). `retrieve_context` returns top-k results without threshold filtering — the LLM judges relevance itself. If results don't match (e.g. user wants foreign cuisine), the LLM calls `web_search` directly. No fixed threshold: the 25-chunk embedding space is too small for a clean cosine cutoff between Chinese and Western food queries.
 
 ### Frontend (Vue 3 + Vite on :3000)
 

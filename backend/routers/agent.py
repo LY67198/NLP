@@ -47,20 +47,13 @@ async def chat(
             {"messages": [{"role": "user", "content": message}]},
             version="v2",
         ):
-            # 追踪 retrieve_context 工具返回的来源
-            if event["event"] == "on_tool_end" and event.get("name") == "retrieve_context":
-                output = event["data"].get("output", "")
-                # LangGraph 返回 ToolMessage 对象，提取 .content 字符串
-                if hasattr(output, "content"):
-                    text = output.content
-                elif isinstance(output, str):
-                    text = output
-                else:
-                    text = str(output)
-                if "本地知识库" in text:
-                    sources_seen.add("本地知识库")
-                if "网络搜索" in text:
+            # 追踪工具调用来源
+            if event["event"] == "on_tool_end":
+                tool_name = event.get("name", "")
+                if tool_name == "web_search":
                     sources_seen.add("网络搜索")
+                elif tool_name == "retrieve_context":
+                    sources_seen.add("本地知识库")
 
             if event["event"] == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]

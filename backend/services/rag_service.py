@@ -2,7 +2,6 @@ from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from services.vector_store import get_vector_store, RECIPES_DIR
 from langchain.tools import tool
-from services.search_service import web_search
 
 
 def ingest_file(file_path: str | None = None) -> list[str]:
@@ -52,25 +51,23 @@ def get_status() -> dict:
     return {"total_chunks": count}
 
 
-RELEVANCE_THRESHOLD = 0.6  # 相关性阈值（0-1），低于此值的本地结果视为不匹配，回退网络搜索
-
 
 @tool
 def retrieve_context(query: str, k: int = 3):
     """【Agent 工具】在本地菜谱知识库中语义检索匹配菜谱。
 
-    自动判断结果相关性：高质量匹配 → 本地知识库，无关结果 → 自动回退网络搜索。
+    返回最相似的 k 个菜谱片段。请自行判断结果是否与用户需求匹配——
+    如果检索到的菜谱与用户食材/需求明显不相关，请调用 web_search 工具联网搜索。
     """
     vector_store = get_vector_store()
 
     if vector_store is None:
-        return "【数据来源：网络搜索】\n\n" + web_search.invoke({"query": query})
+        return "本地知识库不可用，请使用 web_search 工具联网搜索。"
 
-    docs_with_scores = vector_store.similarity_search_with_relevance_scores(query=query, k=k)
-    relevant = [(doc, score) for doc, score in docs_with_scores if score >= RELEVANCE_THRESHOLD]
+    docs = vector_store.similarity_search(query=query, k=k)
 
-    if relevant:
-        lines = [f"{doc.page_content}" for doc, _ in relevant]
+    if docs:
+        lines = [f"{doc.page_content}" for doc in docs]
         return "【数据来源：本地知识库】\n\n" + "\n\n".join(lines)
     else:
-        return "【数据来源：网络搜索】\n\n" + web_search.invoke({"query": query})
+        return "本地知识库中未找到与查询相关的菜谱，请使用 web_search 工具联网搜索。"

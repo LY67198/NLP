@@ -4,7 +4,7 @@ const API_BASE = '/api'
  * Generic SSE stream reader.
  * Reads the response body as a stream of SSE events and invokes callbacks.
  */
-async function fetchSSE(url, options, { onToken, onSessionId, onDone, onError }) {
+async function fetchSSE(url, options, { onToken, onSessionId, onStatus, onDone, onError }) {
   try {
     const response = await fetch(url, {
       ...options,
@@ -42,6 +42,8 @@ async function fetchSSE(url, options, { onToken, onSessionId, onDone, onError })
             onToken?.(data.token)
           } else if (data.sessionId) {
             onSessionId?.(data.sessionId)
+          } else if (data.status) {
+            onStatus?.(data.status)
           } else if (data.error) {
             onError?.(data.error)
           }
@@ -59,6 +61,7 @@ async function fetchSSE(url, options, { onToken, onSessionId, onDone, onError })
           const data = JSON.parse(payload)
           if (data.token) onToken?.(data.token)
           else if (data.sessionId) onSessionId?.(data.sessionId)
+          else if (data.status) onStatus?.(data.status)
         } catch { /* ignore */ }
       }
     }
@@ -71,7 +74,7 @@ async function fetchSSE(url, options, { onToken, onSessionId, onDone, onError })
 }
 
 /** POST /api/agent/chat — stream agent conversation, supports optional image */
-export function agentChatStream({ sessionId, message, file, onToken, onSessionId, onDone, onError }) {
+export function agentChatStream({ sessionId, message, file, onToken, onSessionId, onStatus, onDone, onError }) {
   const formData = new FormData()
   formData.append('sessionId', sessionId)
   formData.append('message', message || '')
@@ -81,7 +84,7 @@ export function agentChatStream({ sessionId, message, file, onToken, onSessionId
   return fetchSSE(
     `${API_BASE}/agent/chat`,
     { method: 'POST', body: formData },
-    { onToken, onSessionId, onDone, onError }
+    { onToken, onSessionId, onStatus, onDone, onError }
   )
 }
 
