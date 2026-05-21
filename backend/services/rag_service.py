@@ -52,7 +52,7 @@ def get_status() -> dict:
     return {"total_chunks": count}
 
 
-RELEVANCE_THRESHOLD = 0.4  # 相关性阈值（0-1），低于此值的本地结果视为不匹配，回退网络搜索
+RELEVANCE_THRESHOLD = 0.6  # 相关性阈值（0-1），低于此值的本地结果视为不匹配，回退网络搜索
 
 
 @tool

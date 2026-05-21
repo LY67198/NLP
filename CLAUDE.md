@@ -49,13 +49,19 @@ ollama logs        # 查看是否有 "failure during GPU discovery" / "offloaded
 
 vision_service.py 中 `httpx.AsyncClient(timeout=240.0)` 控制 Ollama 视觉识别超时。GPU 启用时识别通常 5-15 秒完成；CPU-only 可能需要 2-4 分钟。此 timeout 已在 2026-05-18 从 60s 调整为 240s 以兼容 CPU fallback 场景。
 
-### ChromaDB 相似度分数异常（全部为负数）
+### ChromaDB 相似度分数异常
 
-**现象：** `UserWarning: Relevance scores must be between 0 and 1, got [...]` 且所有查询都回退到网络搜索（不论本地库是否有匹配菜谱）。
+**现象 1（已修复）：** `UserWarning: Relevance scores must be between 0 and 1, got [...]` 且所有查询都回退到网络搜索。
 
-**根因：** ChromaDB 默认使用 L2 距离，`shibing624/text2vec-base-chinese` 输出的未归一化嵌入向量导致 L2 距离值高达上百，LangChain 的 `_euclidean_relevance_score_fn` 换算后分数为极端负数，`RELEVANCE_THRESHOLD = 0.4` 永远不命中。
+**根因：** ChromaDB 默认使用 L2 距离，未归一化嵌入向量导致 L2 距离值高达上百，LangChain 的 `_euclidean_relevance_score_fn` 换算后分数为极端负数。
 
-**解决：** `vector_store.py` 中配置 `collection_metadata={"hnsw:space": "cosine"}` 并设置 `encode_kwargs={"normalize_embeddings": True}`。**需要删除旧 `chroma_db/` 后重新入库**（否则 collection 仍使用旧的 L2 索引）。`main.py` 的 `lifespan` 事件会在启动时自动检测空库并调用 `ingest_file()`。
+**解决：** `vector_store.py` 中配置 `collection_metadata={"hnsw:space": "cosine"}` 并设置 `encode_kwargs={"normalize_embeddings": True}`。**需要删除旧 `chroma_db/` 后重新入库**（否则 collection 仍使用旧的 L2 索引）。
+
+**现象 2（2026-05-21）：** 所有查询都命中本地知识库，网络搜索回退从不触发。
+
+**根因：** 切换到 cosine 后分数正常落在 0-1 区间，但 `RELEVANCE_THRESHOLD = 0.4` 偏低。菜谱库仅 25 chunks，`text2vec-base-chinese` 对任何食物相关查询都能找到 >= 0.45 的弱匹配（如"日本寿司"与"麻婆豆腐"仍有 0.48 余弦相似度）。
+
+**解决：** `RELEVANCE_THRESHOLD` 从 0.4 上调至 **0.6**。实测：西红柿炒鸡蛋 0.65（命中），意大利海鲜烩饭 0.58（回退），日本寿司 0.48（回退）。
 
 ### Windows 下 TextLoader 编码报错
 
@@ -116,7 +122,7 @@ data/
 
 **Vision service** (`services/vision_service.py`): `recognize_ingredients(image_bytes) → list[str]` — base64-encodes image, POSTs to `http://localhost:11434/api/chat` with `qwen3-vl:4b` (timeout=240s), parses JSON ingredient list from response (with regex fallback for malformed output). Runs inside the SSE stream (not as blocking pre-processing); router catches exceptions and degrades gracefully — the conversation continues even if vision fails.
 
-**RAG pipeline** (`services/rag_service.py`): recipes loaded with `TextLoader(encoding="utf-8")` (GBK default on Windows breaks CJK characters) → chunked via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB (cosine distance, `normalize_embeddings=True`). `retrieve_context` tool uses `similarity_search_with_relevance_scores` with a relevance threshold (0.4 on 0-1 scale) — low-quality matches are filtered out, triggering web search fallback. Results prefixed with `【数据来源：本地知识库】` or `【数据来源：网络搜索】`, parsed by router to programmatically append a source footer. Note: `web_search` is a `@tool`-decorated `StructuredTool` and must be called via `.invoke({"query": query})`, not as a plain function.
+**RAG pipeline** (`services/rag_service.py`): recipes loaded with `TextLoader(encoding="utf-8")` (GBK default on Windows breaks CJK characters) → chunked via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB (cosine distance, `normalize_embeddings=True`). `retrieve_context` tool uses `similarity_search_with_relevance_scores` with a relevance threshold (0.6 on 0-1 scale) — low-quality matches are filtered out, triggering web search fallback. Results prefixed with `【数据来源：本地知识库】` or `【数据来源：网络搜索】`, parsed by router to programmatically append a source footer. Note: `web_search` is a `@tool`-decorated `StructuredTool` and must be called via `.invoke({"query": query})`, not as a plain function.
 
 ### Frontend (Vue 3 + Vite on :3000)
 
