@@ -12,9 +12,10 @@ async def get_status():
     return {"code": 200, "message": "success", "data": data}
 
 
-@router.get("/search")
-async def search(query: str, k: int = 3):
-    results = rag_service.search_similar(query=query, k=k)
-    return {"code": 200, "message": "success", "data": results}
+
+# @router.get("/search")
+# async def search(query: str, k: int = 3):
+#     results = rag_service.search_similar(query=query, k=k)
+#     return {"code": 200, "message": "success", "data": results}
 
 

@@ -88,17 +88,6 @@ export function agentChatStream({ sessionId, message, file, onToken, onSessionId
   )
 }
 
-/** GET /api/rag/search — search recipes */
-export async function searchRecipes(query, k = 3) {
-  const params = new URLSearchParams({ query, k: String(k) })
-  const res = await fetch(`${API_BASE}/rag/search?${params}`)
-  const json = await res.json()
-  if (json.code !== 200) {
-    throw new Error(json.message || '搜索失败')
-  }
-  return json.data
-}
-
 /** GET /api/rag/status — get RAG index status */
 export async function getRagStatus() {
   const res = await fetch(`${API_BASE}/rag/status`)

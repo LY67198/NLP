@@ -80,7 +80,7 @@ routers/
                      #   — sessionId="new" generates UUID; file triggers vision pre-processing inline
                      #   — source tracking: extracts .content from ToolMessage (not raw str) in on_tool_end events
                      # DELETE /api/agent/clear/{session_id}
-  rag.py             # GET /api/rag/status, GET /api/rag/search
+  rag.py             # GET /api/rag/status (RAG search happens in-process via agent tools, not via HTTP route)
 services/
   __init__.py        # Re-exports all service functions
   agent_service.py   # Agent via langchain.agents.create_agent(), InMemoryStore for long-term memory
@@ -160,7 +160,7 @@ src/
 | POST | `/api/agent/chat` | FormData: `sessionId`, `message` (optional), `file` (optional image). Returns SSE stream. |
 | DELETE | `/api/agent/clear/{sessionId}` | Clear agent session from memory. |
 | GET | `/api/rag/status` | ChromaDB chunk count. |
-| GET | `/api/rag/search?query=&k=` | Semantic recipe search. |
+| GET | `/api/rag/search?query=&k=` | (commented out — unused, agent calls retrieve_context in-process instead) |
 
 ### Environment variables (.env at project root)
 
