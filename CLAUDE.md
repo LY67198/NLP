@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 项目概述
+
+SmartChef — AI 智能厨房助手。拍照识食材 → ChromaDB 菜谱检索 → LangGraph Agent 对话推荐菜品和烹饪指导。统一通过 `/api/agent/chat` SSE 流式交互。
+
+| 层级 | 技术 |
+|------|------|
+| 后端 | FastAPI + LangChain/LangGraph |
+| LLM | MIMO API (`mimo-v2-omni`) |
+| 视觉 | Ollama `qwen3-vl:4b` |
+| 向量库 | ChromaDB + `text2vec-base-chinese` |
+| 搜索 | Tavily Search API |
+| 前端 | Vue 3 + Vite + Pinia |
+
 ## Development commands
 
 ```bash
