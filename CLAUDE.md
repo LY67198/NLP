@@ -9,11 +9,19 @@ SmartChef — AI 智能厨房助手。拍照识食材 → ChromaDB 菜谱检索 
 | 层级 | 技术 |
 |------|------|
 | 后端 | FastAPI + LangChain/LangGraph |
-| LLM | MIMO API (`mimo-v2-omni`) |
+| LLM | MIMO API (`mimo-v2.5`) |
 | 视觉 | Ollama `qwen3-vl:4b` |
 | 向量库 | ChromaDB + `text2vec-base-chinese` |
 | 搜索 | Tavily Search API |
 | 前端 | Vue 3 + Vite + Pinia |
+
+## Bug 修复工作流
+
+修 Bug 时遵循以下流程：
+
+1. **先定位根因，不要直接改代码。** 追踪完整调用链路，用实际数据复现问题，确认每一个环节的行为。
+2. **提出修改方案，征得同意后再动手。** 方案要说明根因和修改点。
+3. **改动要小，在原有代码基础上微调。** 不要为了修一个 Bug 引入新抽象、新文件、新工具函数。优先改一两行而不是加几十行。
 
 ## Development commands
 
@@ -70,6 +78,27 @@ vision_service.py 中 `httpx.AsyncClient(timeout=240.0)` 控制 Ollama 视觉识
 
 **解决：** `vector_store.py` 中配置 `collection_metadata={"hnsw:space": "cosine"}` 并设置 `encode_kwargs={"normalize_embeddings": True}`。**需要删除旧 `chroma_db/` 后重新入库**（否则 collection 仍使用旧的 L2 索引）。
 
+**当前阈值：** `rag_service.py` 中 `LOCAL_RELEVANCE_THRESHOLD = 0.52`，低于此分数的 chunk 被丢弃。另有菜谱结构校验（chunk 必须包含 `食材清单` 或 `烹饪步骤`），过滤食材搭配指南等非菜谱内容。
+
+### 本地知识库来源误标（LLM 编造菜谱但标注"本地知识库"）
+
+**现象：** 用户上传三文鱼、牛排等食材图片，AI 推荐了清蒸三文鱼、柠檬牛排等菜谱，但来源显示"本地知识库"——而本地菜谱库根本没有三文鱼和牛排相关菜谱。
+
+**根因：** 链路有三层，逐层定位：
+1. ChromaDB 语义搜索返回的 top-3 chunk 语义相近但内容无关（如食材搭配指南 0.66、拍黄瓜 0.64、冬瓜排骨汤 0.59）——因为烹饪域内容在嵌入空间中天然接近。
+2. 旧版 `retrieve_context` 只要 chunk 通过阈值 + bigram 校验就标记 `【数据来源：本地知识库】`，搭配指南等非菜谱内容侥幸通过。
+3. LLM 看到 marker 后信任本地库已命中，忽略实际 chunk 内容，用自身训练数据编造"清蒸三文鱼"等推荐。
+4. Source tracker 检测到 marker → 标为"本地知识库"。
+
+**解决（三层防线）：**
+| 层 | 位置 | 机制 |
+|----|------|------|
+| ① 菜谱结构校验 | `rag_service.py` | chunk 必须包含 `食材清单` 或 `烹饪步骤`，过滤搭配指南/去腥技巧等 |
+| ② LLM 食材交叉验证 | `agent_service.py` 系统提示 | LLM 看到 marker 后必须先检查返回菜谱是否包含用户核心食材，不包含则必须调 web_search |
+| ③ Source tracker 覆盖 | `routers/agent.py` | `web_search` 可覆盖 `retrieve_context` 的 source 标记（去掉 `final_source is None` 条件） |
+
+**验证方法：** 直接调用 `retrieve_context.invoke({'query': '三文鱼 牛排 柠檬 菜谱', 'k': 3})`，确认返回"本地知识库中未找到"而非 marker。
+
 
 ### Windows 下 TextLoader 编码报错
 
@@ -99,7 +128,7 @@ services/
   agent_service.py   # Agent via langchain.agents.create_agent(), InMemoryStore for long-term memory
                      #   — includes monkey-patch for MIMO API reasoning_content preservation (see below)
                      #   — dual-mode system prompt: mode A (ingredients → recommend/rank), mode B (specific dish → direct recipe)
-  rag_service.py     # Recipe ingestion → chunking → ChromaDB; retrieve_context tool (local-only, no threshold — LLM judges relevance)
+  rag_service.py     # Recipe ingestion → chunking → ChromaDB; retrieve_context tool with 0.52 relevance threshold, recipe-structure check, source marker + scores
   search_service.py  # Tavily web search (@tool-decorated StructuredTool, exposed as direct agent tool)
   vision_service.py  # Ollama qwen3-vl:4b ingredient recognition via httpx
   vector_store.py    # ChromaDB singleton, HuggingFace text2vec-base-chinese embeddings with normalize_embeddings=True, cosine distance
@@ -118,9 +147,9 @@ data/
 3. SSE stream starts **immediately**: first event `{"sessionId": "..."}` so frontend always gets a response
 4. If image present → `{"status": "正在分析图片中的食材..."}` event, then `vision_service.recognize_ingredients()` runs **inside** the stream. On success → ingredient list injected as message prefix. On failure → error status event, flow continues with original message (graceful degradation)
 5. `get_or_create_agent(session_id)` returns cached or new agent via `create_agent(model, tools, system_prompt=...)`
-6. Agent has two tools: `retrieve_context` (local ChromaDB search) and `web_search` (Tavily). The LLM decides which to call — local results matching → uses them directly; local results irrelevant (e.g. foreign cuisine not in the KB) → calls web_search.
-7. Response streams via SSE: `{"sessionId": "..."}` first, then optional `{"status": "..."}`, then `{"token": "..."}` chunks, then programmatic `📎 数据来源：xxx` footer token (if retrieve_context was called), then `[DONE]`
-8. Source tracking: router listens for `on_tool_end` events, tracks by tool name — `retrieve_context` → "本地知识库", `web_search` → "网络搜索". Collects unique sources in a set, appends `📎 数据来源：xxx` footer after the model finishes streaming. The LLM is prompted to skip web_search when local results clearly match, so Chinese dishes show only "本地知识库" while foreign dishes trigger web_search and show "网络搜索".
+6. Agent has two tools: `retrieve_context` (local ChromaDB search) and `web_search` (Tavily). `retrieve_context` internally filters chunks by: ① cosine score >= 0.52, ② must contain recipe structure (`食材清单` or `烹饪步骤` — filters out ingredient pairing guides, deodorizing tips, etc.). If verified chunks exist → returns `【数据来源：本地知识库】` + chunks with scores. If not → returns "本地知识库中未找到" with best score vs threshold. System prompt then requires the LLM to cross-check: do the retrieved recipes actually contain the user's core ingredients? If not → must call web_search.
+7. Response streams via SSE: `{"sessionId": "..."}` first, then optional `{"status": "..."}`, then `{"token": "..."}` chunks, then programmatic `📎 数据来源：xxx` footer token (if a source was detected), then `[DONE]`
+8. Source tracking: router inspects tool output content in `on_tool_end` events. `retrieve_context` → checks for `【数据来源：本地知识库】` in output (only sets if `final_source` is None). `web_search` → checks output doesn't contain "未找到相关搜索结果" (always overrides, because if LLM needed web_search, local results were insufficient). Appends `📎 数据来源：xxx` footer after streaming.
 
 **Session management:** Agents cached in an in-memory `_agents: dict` keyed by session ID. `InMemoryStore` provides cross-session long-term memory for user preferences. Sessions lost on restart.
 
@@ -130,7 +159,7 @@ data/
 
 **Vision service** (`services/vision_service.py`): `recognize_ingredients(image_bytes) → list[str]` — base64-encodes image, POSTs to `http://localhost:11434/api/chat` with `qwen3-vl:4b` (timeout=240s), parses JSON ingredient list from response (with regex fallback for malformed output). Runs inside the SSE stream (not as blocking pre-processing); router catches exceptions and degrades gracefully — the conversation continues even if vision fails.
 
-**RAG pipeline** (`services/rag_service.py`): recipes loaded with `TextLoader(encoding="utf-8")` (GBK default on Windows breaks CJK characters) → chunked via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB (cosine distance, `normalize_embeddings=True`). `retrieve_context` returns top-k results without threshold filtering — the LLM judges relevance itself. If results don't match (e.g. user wants foreign cuisine), the LLM calls `web_search` directly. No fixed threshold: the 25-chunk embedding space is too small for a clean cosine cutoff between Chinese and Western food queries.
+**RAG pipeline** (`services/rag_service.py`): recipes loaded with `TextLoader(encoding="utf-8")` (GBK default on Windows breaks CJK characters) → chunked via `RecursiveCharacterTextSplitter` (chunk_size=500, overlap=50) → ChromaDB (cosine distance, `normalize_embeddings=True`). `retrieve_context` uses `similarity_search_with_relevance_scores` with `LOCAL_RELEVANCE_THRESHOLD = 0.52` — chunks below threshold are discarded. Verified chunks must also contain `食材清单` or `烹饪步骤` to filter out non-recipe content (ingredient pairing guides, deodorizing tips). Match returns `【数据来源：本地知识库】` with per-chunk scores; no match or no verified chunks → returns best score vs threshold so the LLM can decide. System prompt additionally requires the LLM to verify retrieved recipes contain the user's ingredients before using them — if not, it must call web_search.
 
 ### Frontend (Vue 3 + Vite on :3000)
 
@@ -155,13 +184,13 @@ src/
 
 **Data flow:** User types text / uploads image / both → `chat.js:sendMessage()` → POST `/api/agent/chat` with FormData (sessionId, message, file) → SSE stream: `sessionId` event first, optional `status` events (e.g. "正在分析图片中的食材..."), then `token` chunks streamed in real time. Status text is shown in the AI message bubble and replaced by the first real token (avoids "dirty" concatenation).
 
-**State** lives in Pinia `chat` store: `sessions`, `activeSessionId`, `pendingImage`, `isStreaming`. No frontend-side recipe matching or ingredient logic.
+**State** lives in Pinia `chat` store: `sessions`, `activeSessionId`, `pendingImage`, `isStreaming`, `ragTotalChunks`. No frontend-side recipe matching or ingredient logic.
 
 ### Key external services
 
 | Service | Purpose | Model/Provider |
 |---------|---------|----------------|
-| MIMO API | LLM (agent conversations) | `mimo-v2-omni` via OpenAI-compatible endpoint |
+| MIMO API | LLM (agent conversations) | `mimo-v2.5` via OpenAI-compatible endpoint |
 | Ollama | On-device vision (ingredient recognition) | `qwen3-vl:4b` on `localhost:11434` |
 | ChromaDB | Recipe vector store (local persistence) | `shibing624/text2vec-base-chinese` embeddings |
 | Tavily | Web search fallback for recipes | — |

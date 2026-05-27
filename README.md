@@ -5,8 +5,8 @@
 ## 功能特性
 
 - **拍照识食材** — 上传食材照片，本地 Ollama 视觉模型自动识别食材清单
-- **智能菜谱推荐** — 基于 ChromaDB 向量检索，从本地菜谱库中匹配最佳菜谱
-- **网络搜索兜底** — 本地菜谱库未覆盖时，自动通过 Tavily 联网搜索补充
+- **智能菜谱推荐** — 基于 ChromaDB 向量检索（0.52 相关度阈值 + 菜谱结构校验），从本地菜谱库中匹配最佳菜谱，LLM 交叉验证食材匹配
+- **网络搜索兜底** — 本地菜谱库未覆盖或食材不匹配时，自动通过 Tavily 联网搜索补充
 - **多轮对话指导** — 支持追问替代食材、调整做法、细化步骤，像和真人厨师聊天一样
 - **流式实时回复** — 基于 SSE 的流式输出，无需等待完整回复
 
@@ -16,7 +16,7 @@
 |------|------|
 | 后端框架 | FastAPI + Uvicorn |
 | AI Agent | LangChain + LangGraph |
-| LLM | MIMO API (`mimo-v2-omni`) |
+| LLM | MIMO API (`mimo-v2.5`) |
 | 视觉识别 | Ollama (`qwen3-vl:4b`) |
 | 向量检索 | ChromaDB + HuggingFace (`text2vec-base-chinese`) |
 | 网络搜索 | Tavily Search API |
@@ -114,9 +114,11 @@ smart-chef/
 
 如遇到视觉识别超时（2-4 分钟），可能是 Ollama 未启用 GPU。运行 `ollama ps` 检查 PROCESSOR 列：显示 `100% GPU` 为正常，`100% CPU` 则需重启 Ollama。
 
-### ChromaDB 相似度
+### 菜谱检索与来源标注
 
-如果菜谱检索结果不相关，删除 `backend/data/chroma_db/` 目录后重启后端，让 ChromaDB 以 cosine 距离重建索引。
+`retrieve_context` 内部有两层过滤：① cosine 相关度 >= 0.52，② chunk 必须包含菜谱结构（`食材清单` 或 `烹饪步骤`），过滤食材搭配指南等非菜谱内容。系统提示还要求 LLM 交叉验证检索结果是否包含用户的核心食材，不匹配则自动调用网络搜索。
+
+如果 LLM 编造了本地不存在的菜谱但标注"本地知识库"，参考 `CLAUDE.md` 中的"本地知识库来源误标"排查流程。
 
 ### Windows 编码
 

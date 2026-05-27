@@ -1,8 +1,3 @@
-"""
-LangChain Agent 构建与会话管理。
-使用 create_agent 创建具备 RAG 检索 + 联网搜索双工具的烹饪助手，
-通过 InMemoryStore 实现跨会话的长期用户偏好记忆。
-"""
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langgraph.store.memory import InMemoryStore
@@ -66,14 +61,15 @@ system_prompt = """
 **工具使用规则（重要！严格遵守）：**
 - 第一步：调用 retrieve_context 搜索本地菜谱知识库。
 - 第二步：判断返回结果是否匹配。
-  - 如果返回了与用户需求匹配的菜谱（如用户问西红柿炒鸡蛋，返回了西红柿炒鸡蛋），直接使用这些结果回复用户。严禁再调用 web_search！
+  - 如果 retrieve_context 返回内容包含“【数据来源：本地知识库】”，请先检查返回的菜谱中是否确实包含用户的核心食材。如果用户提到的食材在返回结果中完全未出现，说明实际未命中，必须调用 web_search。确认命中后才可直接使用这些结果回复用户，严禁再调用 web_search。
+  - 如果 retrieve_context 返回“本地知识库中未找到”或提示相关度低，必须调用 web_search，不能用模型常识补全菜谱。
   - 只有在返回结果明显不匹配（如用户要墨西哥菜、意大利菜、日料等本地库没有的菜系），或未返回任何结果时，才调用 web_search。
 - 严禁自行编造菜谱，你只能推荐工具返回结果中实际存在的菜谱。
 
 请严格按照上述规则操作。工具返回结果可能包含来源标注，请不要在回复中重复这些标注——系统会自动追加来源信息。
 """
 model = init_chat_model(
-    model="mimo-v2-omni",
+    model="mimo-v2.5",
     model_provider="openai",
     api_key=os.getenv("MIMO_API_KEY"),
     base_url=os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1"),

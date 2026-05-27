@@ -41,19 +41,24 @@ async def chat(
 
         agent = agent_service.get_or_create_agent(sessionId)
 
-        sources_seen = set()  # 来源追踪：收集所有唯一来源
+        final_source = None  # 来源追踪：记录最终用于回答的来源
 
         async for event in agent.astream_events(
             {"messages": [{"role": "user", "content": message}]},
             version="v2",
         ):
-            # 追踪工具调用来源
+            # 追踪工具调用来源：只有工具返回有效结果才标记来源
             if event["event"] == "on_tool_end":
                 tool_name = event.get("name", "")
-                if tool_name == "web_search":
-                    sources_seen.add("网络搜索")
-                elif tool_name == "retrieve_context":
-                    sources_seen.add("本地知识库")
+                raw = event.get("data", {}).get("output", "")
+                # ToolMessage 对象取 .content，字符串直接用
+                output = getattr(raw, "content", raw) if hasattr(raw, "content") else raw
+                output = str(output)
+                if tool_name == "retrieve_context":
+                    if final_source is None and "【数据来源：本地知识库】" in output:
+                        final_source = "本地知识库"
+                elif tool_name == "web_search" and "未找到相关搜索结果" not in output:
+                    final_source = "网络搜索"
 
             if event["event"] == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
@@ -61,9 +66,8 @@ async def chat(
                     yield f"data: {json.dumps({'token': chunk.content})}\n\n"
 
         # 流结束后追加来源脚注
-        if sources_seen:
-            label = "、".join(sources_seen)
-            yield f"data: {json.dumps({'token': f'\\n\\n📎 数据来源：{label}'})}\n\n"
+        if final_source:
+            yield f"data: {json.dumps({'token': f'\\n\\n📎 数据来源：{final_source}'})}\n\n"
 
         yield "data: [DONE]\n\n"
 

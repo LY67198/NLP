@@ -3,6 +3,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from services.vector_store import get_vector_store, RECIPES_DIR
 from langchain.tools import tool
 
+LOCAL_RELEVANCE_THRESHOLD = 0.52
+
 
 def ingest_file(file_path: str | None = None) -> list[str]:
     """将菜谱文档分块向量化并存入 ChromaDB。
@@ -34,11 +36,22 @@ def search_similar(query: str, k: int = 3) -> list[dict]:
         k:    返回结果数量，默认 3。
 
     Returns:
-        list[dict]: 每个元素为 {"content": 文档内容, "metadata": 元信息}。
+        list[dict]: 每个元素为 {"content": 文档内容, "metadata": 元信息, "score": 相关度}。
     """
     vector_store = get_vector_store()
-    docs = vector_store.similarity_search(query=query, k=k)
-    return [{"content": doc.page_content, "metadata": doc.metadata} for doc in docs]
+    docs_and_scores = vector_store.similarity_search_with_relevance_scores(
+        query=query,
+        k=k,
+    )
+    return [
+        {
+            "content": doc.page_content,
+            "metadata": doc.metadata,
+            "score": score,
+        }
+        for doc, score in docs_and_scores
+        if score >= LOCAL_RELEVANCE_THRESHOLD
+    ]
 
 
 def get_status() -> dict:
@@ -64,10 +77,41 @@ def retrieve_context(query: str, k: int = 3):
     if vector_store is None:
         return "本地知识库不可用，请使用 web_search 工具联网搜索。"
 
-    docs = vector_store.similarity_search(query=query, k=k)
+    docs_and_scores = vector_store.similarity_search_with_relevance_scores(
+        query=query,
+        k=k,
+    )
+    matches = [
+        (doc, score)
+        for doc, score in docs_and_scores
+        if score >= LOCAL_RELEVANCE_THRESHOLD
+    ]
 
-    if docs:
-        lines = [f"{doc.page_content}" for doc in docs]
+    if matches:
+        # 只保留包含完整菜谱结构的 chunk（食材清单 + 烹饪步骤），
+        # 过滤食材搭配指南、去腥技巧等非菜谱参考内容。
+        verified = [
+            (doc, score)
+            for doc, score in matches
+            if "食材清单" in doc.page_content or "烹饪步骤" in doc.page_content
+        ]
+        if not verified:
+            best_score = max((score for _, score in docs_and_scores), default=0)
+            return (
+                "本地知识库中未找到与查询相关的菜谱"
+                f"（最高相关度 {best_score:.2f}，阈值 {LOCAL_RELEVANCE_THRESHOLD:.2f}），"
+                "请使用 web_search 工具联网搜索。"
+            )
+
+        lines = [
+            f"相关度：{score:.2f}\n{doc.page_content}"
+            for doc, score in verified
+        ]
         return "【数据来源：本地知识库】\n\n" + "\n\n".join(lines)
-    else:
-        return "本地知识库中未找到与查询相关的菜谱，请使用 web_search 工具联网搜索。"
+
+    best_score = max((score for _, score in docs_and_scores), default=0)
+    return (
+        "本地知识库中未找到与查询相关的菜谱"
+        f"（最高相关度 {best_score:.2f}，阈值 {LOCAL_RELEVANCE_THRESHOLD:.2f}），"
+        "请使用 web_search 工具联网搜索。"
+    )
